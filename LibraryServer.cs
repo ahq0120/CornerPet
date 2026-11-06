@@ -1,0 +1,31 @@
+using System;using System.Collections.Generic;using System.IO;using System.Net;using System.Net.Sockets;using System.Security.Cryptography;using System.Text;using System.Threading;using System.Threading.Tasks;using System.Web.Script.Serialization;
+internal sealed class LibraryServer : IDisposable {
+ TcpListener listener;Thread accept;volatile bool stopped;readonly byte[] keyHash;readonly SemaphoreSlim slots=new SemaphoreSlim(4);readonly HashSet<TcpClient> clients=new HashSet<TcpClient>();internal LibraryStore Store;internal int Port;internal string Address;
+ internal LibraryServer(IPAddress bind,int port,string key,string folder){if(String.IsNullOrEmpty(key)||(key.Length<12||key.Length>256))throw new ArgumentException("共享密碼至少需要 12 個字元。");if(bind.AddressFamily!=AddressFamily.InterNetwork||bind.Equals(IPAddress.Any))throw new ArgumentException("請選擇一個實際的 IPv4 位址。");using(var sha=SHA256.Create())keyHash=sha.ComputeHash(Encoding.UTF8.GetBytes(key));
+  try{Store=new LibraryStore(folder);listener=new TcpListener(bind,port);listener.Start(16);Port=((IPEndPoint)listener.LocalEndpoint).Port;Address="http://"+bind+":"+Port;accept=new Thread(Accept){IsBackground=true,Name="CornerPet Library"};accept.Start();}catch{Dispose();throw;}}
+ void Accept(){while(!stopped){TcpClient client;try{client=listener.AcceptTcpClient();}catch{if(stopped)return;continue;}if(!slots.Wait(0)){client.Close();continue;}lock(clients)clients.Add(client);Task.Run(()=>{try{Handle(client);}catch{}finally{lock(clients)clients.Remove(client);client.Close();slots.Release();}});}}
+ bool Authorized(string value){try{if(value==null||value.Length>1024)return false;byte[] actual;using(var sha=SHA256.Create())actual=sha.ComputeHash(Convert.FromBase64String(value));int diff=0;for(int i=0;i<actual.Length;i++)diff|=actual[i]^keyHash[i];return diff==0;}catch(FormatException){return false;}}
+ void Handle(TcpClient client){client.ReceiveTimeout=15000;client.SendTimeout=15000;using(var stream=client.GetStream()){
+  try{string header=ReadHeader(stream);string[] lines=header.Split(new[]{"\r\n"},StringSplitOptions.None);string[] request=lines[0].Split(' ');if(request.Length!=3||!request[1].StartsWith("/")||request[1].StartsWith("//")){Reply(stream,400,"無效請求");return;}
+   var headers=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);for(int i=1;i<lines.Length;i++){int colon=lines[i].IndexOf(':');if(colon>0){string name=lines[i].Substring(0,colon).Trim();if(headers.ContainsKey(name)){Reply(stream,400,"重複標頭");return;}headers[name]=lines[i].Substring(colon+1).Trim();}}
+   string token;if(!headers.TryGetValue("X-Library-Key",out token)||!Authorized(token)){Reply(stream,401,"共享密碼不正確");return;}
+   if(headers.ContainsKey("Transfer-Encoding")){Reply(stream,400,"不支援分塊上傳");return;}
+   var uri=new Uri("http://localhost"+request[1]);string route=uri.AbsolutePath;
+   if(request[0]=="GET"&&route=="/health"){Json(stream,200,new{Version=1,Status="online",MaxBytes=LibraryStore.MaxBytes});return;}
+   if(request[0]=="GET"&&route=="/assets"){int page=0;string q=uri.Query.TrimStart('?');if(q.StartsWith("page="))Int32.TryParse(q.Substring(5),out page);Json(stream,200,Store.List(page));return;}
+   if(request[0]=="POST"&&route=="/assets"){
+    string sizeText;long size;if(!headers.TryGetValue("Content-Length",out sizeText)||!Int64.TryParse(sizeText,out size)||size<1){Reply(stream,400,"需要檔案長度");return;}if(size>LibraryStore.MaxBytes){Reply(stream,413,"素材上限為 20 MB");return;}
+    string filename;headers.TryGetValue("X-File-Name",out filename);filename=filename==null?"素材":Uri.UnescapeDataString(filename);string temporary=Path.Combine(Store.Folder,Guid.NewGuid().ToString("N")+".upload");
+    try{using(var file=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)){var buffer=new byte[32768];long remaining=size;while(remaining>0){int n=stream.Read(buffer,0,(int)Math.Min(buffer.Length,remaining));if(n==0)throw new IOException("上傳中斷");file.Write(buffer,0,n);remaining-=n;}}
+     Json(stream,201,Store.Import(temporary,filename));}catch(InvalidDataException ex){Reply(stream,415,ex.Message);}finally{if(File.Exists(temporary))File.Delete(temporary);}return;
+   }
+   if(request[0]=="GET"&&(route.StartsWith("/files/")||route.StartsWith("/thumbs/"))){bool thumb=route.StartsWith("/thumbs/");string id=route.Substring(thumb?8:7);var item=Store.Get(id);if(item==null){Reply(stream,404,"找不到素材");return;}string path=thumb?Store.ThumbPath(item):Store.FilePath(item);using(var file=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete)){Header(stream,200,thumb?"image/png":"application/octet-stream",file.Length);file.CopyTo(stream,32768);}return;}
+   Reply(stream,404,"找不到端點");
+  }catch(IOException){}catch{try{Reply(stream,500,"素材服務發生錯誤");}catch{}}
+ }}
+ static string ReadHeader(Stream stream){var bytes=new List<byte>();int matched=0;byte[] end={13,10,13,10};while(bytes.Count<16384){int value=stream.ReadByte();if(value<0)throw new IOException("連線中斷");bytes.Add((byte)value);matched=value==end[matched]?matched+1:value==13?1:0;if(matched==4)return Encoding.ASCII.GetString(bytes.ToArray(),0,bytes.Count-4);}throw new IOException("標頭過長");}
+ static void Header(Stream stream,int code,string type,long length){string reason=code==200?"OK":code==201?"Created":code==401?"Unauthorized":code==404?"Not Found":code==413?"Payload Too Large":"Error";byte[] header=Encoding.ASCII.GetBytes("HTTP/1.1 "+code+" "+reason+"\r\nContent-Type: "+type+"\r\nContent-Length: "+length+"\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n");stream.Write(header,0,header.Length);}
+ static void Json(Stream stream,int code,object value){byte[] body=Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(value));Header(stream,code,"application/json; charset=utf-8",body.Length);stream.Write(body,0,body.Length);}
+ static void Reply(Stream stream,int code,string text){Json(stream,code,new{Error=text});}
+ public void Dispose(){if(stopped)return;stopped=true;if(listener!=null)listener.Stop();lock(clients)foreach(var client in clients)client.Close();if(accept!=null&&Thread.CurrentThread!=accept)accept.Join(1000);if(Store!=null){Store.Dispose();Store=null;}}
+}

@@ -1,0 +1,35 @@
+# Build products
+*.exe
+*.dll
+*.pdb
+*.zip
+bin/
+obj/
+artifacts/
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Local settings, credentials and runtime data
+.env
+.env.*
+settings.xml
+library-client.xml
+library-host.xml
+shortcuts-status.txt
+SharedLibrary/
+Downloads/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.part
+*.upload
+*.image
+*.tmp
+
+# Generated diagnostic results
+test-results.txt
+library-test-results.txt
+work/
