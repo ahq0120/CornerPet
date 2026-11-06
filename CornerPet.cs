@@ -17,7 +17,7 @@ internal sealed class Pet : Form {
  GlobalShortcuts shortcuts; bool testMode; ImageAsset asset; RenderSurface surface; int frame; internal int DrawCount; internal long BufferBytes {get{return surface==null?0:surface.Bytes;}} internal bool Animating {get{return timer!=null&&timer.Enabled;}} internal bool DecoderLoaded {get{return asset!=null&&asset.Image!=null;}} Timer timer; NotifyIcon tray; PanelWindow panel; LibraryWindow library; bool dragging; Point grab; string warning="";
  protected override CreateParams CreateParams {get{var p=base.CreateParams;p.ExStyle|=0x80000|0x80|0x08000000;return p;}}
  protected override bool ShowWithoutActivation {get{return true;}}
- internal Pet(Preferences state, bool test=false){testMode=test;
+ internal Pet(Preferences state, bool test=false, bool startup=false){testMode=test;
   state.Width=Math.Max(64,Math.Min(600,state.Width));State=state;FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;TopMost=true;StartPosition=FormStartPosition.Manual;Width=state.Width;Height=state.Width;
   var area=Screen.PrimaryScreen.WorkingArea;Location=state.X==Int32.MinValue?new Point(area.Right-Width-32,area.Bottom-Height-24):new Point(state.X,state.Y);
   Clamp();
@@ -28,7 +28,7 @@ internal sealed class Pet : Form {
   MouseUp+=(s,e)=>{if(dragging){dragging=false;Capture=false;Clamp();Remember();}};
   MouseDoubleClick+=(s,e)=>OpenPanel();
   timer=new Timer();timer.Tick+=(s,e)=>{if(!Visible||asset==null)return;frame=(frame+1)%FrameCount;asset.Image.SelectActiveFrame(FrameDimension.Time,frame);Draw();Schedule();};
-  Shown+=(s,e)=>{if(!testMode){shortcuts=new GlobalShortcuts(id=>{if(id==1){modeKeyCount++;SetGame(!Game);}else{screenKeyCount++;SwitchMonitor();}ShortcutDiagnostics();});HotkeyReady=shortcuts.ModeReady;MonitorHotkeyReady=shortcuts.MonitorReady;ShortcutDiagnostics();}SetGame(state.Game);if(!String.IsNullOrEmpty(state.ImagePath)){try{LoadImage(state.ImagePath);}catch(Exception ex){warning="上次的圖片無法讀取："+ex.Message;}}Draw();Schedule();if(!testMode&&asset==null)OpenPanel();};
+  Shown+=(s,e)=>{if(!testMode){shortcuts=new GlobalShortcuts(id=>{if(id==1){modeKeyCount++;SetGame(!Game);}else{screenKeyCount++;SwitchMonitor();}ShortcutDiagnostics();});HotkeyReady=shortcuts.ModeReady;MonitorHotkeyReady=shortcuts.MonitorReady;ShortcutDiagnostics();}SetGame(state.Game);if(!String.IsNullOrEmpty(state.ImagePath)){try{LoadImage(state.ImagePath);}catch(Exception ex){warning="上次的圖片無法讀取："+ex.Message;}}Draw();Schedule();if(!testMode&&!startup&&asset==null)OpenPanel();};
  }
  protected override void WndProc(ref Message m){if(m.Msg==0x312){int id=m.WParam.ToInt32();if(id==1){SetGame(!Game);return;}if(id==2){SwitchMonitor();return;}}if(m.Msg==0x21){m.Result=new IntPtr(3);return;}base.WndProc(ref m);}
  internal void SetGame(bool game){Game=game;State.Game=game;int style=Native.GetWindowLong(Handle,-20);Native.SetWindowLong(Handle,-20,game?style|0x20:style&~0x20);tray.Text=game?"CornerPet · 遊戲模式（滑鼠穿透）":"CornerPet · 一般模式（可拖曳）";Remember();if(panel!=null&&!panel.IsDisposed)panel.RefreshStatus();}
@@ -46,7 +46,7 @@ internal sealed class Pet : Form {
  protected override void OnVisibleChanged(EventArgs e){base.OnVisibleChanged(e);if(timer==null)return;if(!Visible){timer.Stop();ReleaseSurface();if(asset!=null)asset.Suspend();}else{if(asset!=null)asset.Resume(frame);Draw();Schedule();}}
  internal void ResizePet(int width){State.Width=Math.Max(64,Math.Min(600,width));Width=State.Width;Height=asset==null?Width:Math.Max(1,(int)Math.Round((double)Width*asset.Height/asset.Width));if(Height>900){Height=900;Width=(int)Math.Round(900.0*asset.Width/asset.Height);State.Width=Width;}Clamp();Draw();Remember();}
  internal void SwitchMonitor(){var all=Screen.AllScreens;var current=Screen.FromRectangle(Bounds);var displays=Array.ConvertAll(all,s=>new DisplayInfo{Name=s.DeviceName,Primary=s.Primary,Work=s.WorkingArea});int index=ScreenPlacement.Target(current.DeviceName,previousSecondary,displays);if(index<0)return;if(!current.Primary)previousSecondary=current.DeviceName;else previousSecondary=all[index].DeviceName;Location=ScreenPlacement.Map(Bounds,current.WorkingArea,all[index].WorkingArea);Draw();Remember();}
- void ShortcutDiagnostics(){try{Directory.CreateDirectory(Preferences.Folder);File.WriteAllText(Path.Combine(Preferences.Folder,"shortcuts-status.txt"),"version=0.3.4\nbackend="+shortcuts.Backend+"\nF7="+HotkeyReady+"\nF8="+MonitorHotkeyReady+"\nF7Actions="+modeKeyCount+"\nF8Actions="+screenKeyCount+"\nerror="+shortcuts.Failure);}catch{}}
+ void ShortcutDiagnostics(){try{Directory.CreateDirectory(Preferences.Folder);File.WriteAllText(Path.Combine(Preferences.Folder,"shortcuts-status.txt"),"version=0.3.5\nbackend="+shortcuts.Backend+"\nF7="+HotkeyReady+"\nF8="+MonitorHotkeyReady+"\nF7Actions="+modeKeyCount+"\nF8Actions="+screenKeyCount+"\nerror="+shortcuts.Failure);}catch{}}
  internal string ShortcutStatus {get{return (HotkeyReady?"F7 模式":"F7 無法監聽")+" / "+(MonitorHotkeyReady?"F8 螢幕":"F8 無法監聽");}}
  internal void Corner(bool right,bool bottom){var a=Screen.FromPoint(Cursor.Position).WorkingArea;Location=new Point(right?a.Right-Width-20:a.Left+20,bottom?a.Bottom-Height-20:a.Top+20);Draw();Remember();}
  void Clamp(){var a=Screen.FromRectangle(Bounds).WorkingArea;Location=new Point(Math.Max(a.Left,Math.Min(Left,a.Right-Width)),Math.Max(a.Top,Math.Min(Top,a.Bottom-Height)));}
@@ -63,9 +63,9 @@ internal sealed class Pet : Form {
  protected override void OnFormClosed(FormClosedEventArgs e){timer.Stop();timer.Dispose();if(shortcuts!=null)shortcuts.Dispose();tray.Visible=false;tray.Dispose();if(panel!=null)panel.Dispose();if(library!=null)library.Dispose();if(asset!=null)asset.Dispose();ReleaseSurface();ContextMenuStrip.Dispose();Remember();base.OnFormClosed(e);}
 }
 internal sealed class PanelWindow : Form {
- readonly Pet pet;Label status,source,widthValue;Button mode;static readonly Font panelFont=new Font("Microsoft JhengHei UI",10),dataFont=new Font("Consolas",11);
+ readonly Pet pet;Label status,source,widthValue;Button mode,autoStart;readonly StartupRegistration startup=new StartupRegistration(Application.ExecutablePath);static readonly Font panelFont=new Font("Microsoft JhengHei UI",10),dataFont=new Font("Consolas",11);
  static readonly Color background=Color.FromArgb(27,30,34),surfaceColor=Color.FromArgb(39,43,48),lineColor=Color.FromArgb(65,71,78),textColor=Color.FromArgb(226,230,234),muted=Color.FromArgb(151,160,169),accent=Color.FromArgb(225,180,75);
- internal PanelWindow(Pet p){pet=p;Text="CornerPet | 控制台 v0.3.4";ClientSize=new Size(420,376);Font=panelFont;BackColor=background;ForeColor=textColor;FormBorderStyle=FormBorderStyle.FixedSingle;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
+ internal PanelWindow(Pet p){pet=p;Text="CornerPet | 控制台 v0.3.5";ClientSize=new Size(420,436);Font=panelFont;BackColor=background;ForeColor=textColor;FormBorderStyle=FormBorderStyle.FixedSingle;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
   Label("模式",20,18,200,22,muted);
   status=Label("",20,44,214,24,textColor);
   Label(pet.ShortcutStatus,20,74,214,20,pet.HotkeyReady&&pet.MonitorHotkeyReady?muted:accent).Font=dataFont;
@@ -78,18 +78,19 @@ internal sealed class PanelWindow : Form {
   Label("寬度",20,221,90,24,muted);widthValue=Label("",130,221,90,24,textColor);widthValue.Font=dataFont;
   Button("−",240,214,74,36,()=>{pet.ResizePet(pet.State.Width-20);RefreshStatus();});Button("＋",326,214,74,36,()=>{pet.ResizePet(pet.State.Width+20);RefreshStatus();});
   Label("位置",20,275,90,24,muted);Button("左下角",130,268,129,36,()=>pet.Corner(false,true));Button("右下角",271,268,129,36,()=>pet.Corner(true,true));
-  Rule(320);Button("收起",20,332,184,36,()=>Close());Button("結束程式",216,332,184,36,()=>pet.Close());
+  Rule(320);autoStart=Button("",20,332,380,36,()=>{try{startup.SetEnabled(!startup.Enabled);RefreshStartup();}catch(Exception ex){MessageBox.Show(this,ex.Message,"開機啟動設定失敗",MessageBoxButtons.OK,MessageBoxIcon.Warning);}});RefreshStartup();Rule(380);Button("收起",20,392,184,36,()=>Close());Button("結束程式",216,392,184,36,()=>pet.Close());
   ActiveControl=mode;RefreshStatus();
  }
  Label Label(string text,int x,int y,int width,int height,Color color){var label=new Label{Text=text,Location=new Point(x,y),Size=new Size(width,height),ForeColor=color,TextAlign=ContentAlignment.MiddleLeft};Controls.Add(label);return label;}
  void Rule(int y){Controls.Add(new Label{Location=new Point(20,y),Size=new Size(380,1),BackColor=lineColor});}
  Button Button(string text,int x,int y,int width,int height,Action action){var b=new Button{Text=text,Location=new Point(x,y),Size=new Size(width,height),FlatStyle=FlatStyle.Flat,BackColor=surfaceColor,ForeColor=textColor,UseVisualStyleBackColor=false,Cursor=Cursors.Hand};b.FlatAppearance.BorderColor=lineColor;b.FlatAppearance.MouseOverBackColor=Color.FromArgb(53,59,66);b.FlatAppearance.MouseDownBackColor=Color.FromArgb(65,72,80);b.Click+=(s,e)=>action();Controls.Add(b);return b;}
+ void RefreshStartup(){try{bool enabled=startup.Enabled;autoStart.Text=enabled?"開機啟動：已啟用":startup.RegisteredCommand!=null?"開機啟動：更新為此版本":"開機啟動：未啟用";autoStart.FlatAppearance.BorderColor=enabled?accent:lineColor;}catch{autoStart.Text="開機啟動：無法讀取設定";}}
  internal void RefreshStatus(){status.Text=pet.Game?"遊戲 / 滑鼠穿透":"一般 / 可拖曳";status.ForeColor=pet.Game?accent:textColor;mode.Text=pet.Game?"切換一般模式":"啟用遊戲模式";mode.FlatAppearance.BorderColor=pet.Game?accent:lineColor;source.Text=pet.HasAsset?Path.GetFileName(pet.State.ImagePath):"未匯入素材";widthValue.Text=pet.State.Width+" px";}
 }
 internal static class Program {
  [STAThread] static int Main(string[] args){Native.SetProcessDPIAware();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
   if(args.Length>0&&args[0]=="--self-test")return SelfTest.Run();
   if(args.Length>0&&args[0]=="--library-test")return LibraryTests.Run();
-  bool first;using(var mutex=new System.Threading.Mutex(true,"Local\\CornerPet.Desktop.v1",out first)){if(!first){MessageBox.Show("CornerPet 正在執行，請先從系統匣結束舊程式，再重新開啟 v0.3.4。");return 0;}var pet=new Pet(Preferences.Load());if(args.Length>0&&args[0]=="--control-panel")pet.Shown+=(s,e)=>pet.OpenPanel();Application.Run(pet);}return 0;
+  bool first;using(var mutex=new System.Threading.Mutex(true,"Local\\CornerPet.Desktop.v1",out first)){if(!first){MessageBox.Show("CornerPet 正在執行，請先從系統匣結束舊程式，再重新開啟 v0.3.5。");return 0;}var pet=new Pet(Preferences.Load(),false,Array.IndexOf(args,"--startup")>=0);if(args.Length>0&&args[0]=="--control-panel")pet.Shown+=(s,e)=>pet.OpenPanel();Application.Run(pet);}return 0;
  }
 }

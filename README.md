@@ -1,6 +1,6 @@
 # CornerPet
 
-Windows 桌寵與 VPN 共享素材庫。現有版本：**v0.3.4**。
+Windows 桌寵與 VPN 共享素材庫。現有版本：**v0.3.5**。
 
 ## 功能
 
@@ -10,6 +10,7 @@ Windows 桌寵與 VPN 共享素材庫。現有版本：**v0.3.4**。
 - F7／F8 以全域鍵盤掛接觀察後傳遞，讓 Wuwa Tappo 等其他程式共用；不註冊獨占熱鍵。
 - 重用顯示尺寸的繪圖緩衝區，隱藏時停止動畫並釋放圖片解碼器。
 - 工業風控制台，沒有內建角色。
+- 控制台提供「開機啟動」開關，登入 Windows 後自動還原桌寵，預設關閉。
 - 獨立素材主機：上傳、靜態縮圖、每頁 12 筆、下載套用與本機離線快取。
 - SQLite 素材清單、SHA-256 去重與下載驗證、Windows DPAPI 保護共享密碼。
 
@@ -31,6 +32,14 @@ Windows 10／11、.NET Framework 4.x。無 NuGet 套件需求；SQLite 使用 Wi
 - `CornerPet-LibraryHost.exe`：共享素材主機。
 
 執行前請先從系統匣結束其他版本的桌寵。控制台標題會顯示版本。
+
+## 開機啟動
+
+控制台按「開機啟動：未啟用」即可啟用，再按一次停用。此設定只作用於目前 Windows 使用者，不需管理員權限，也不會自動啟動素材庫主機或 VPN。
+
+啟動項目存於目前使用者的 `Software\Microsoft\Windows\CurrentVersion\Run`，只操作名稱為 `CornerPet` 的項目。開機啟動時使用 `--startup`，還原上次素材、不自動彈出控制台；尚未設定素材時保留系統匣圖示。
+
+程式搬到其他資料夾後，請在新位置重新設定開機啟動。若 Windows 工作管理員已另行停用該啟動項目，需先在 Windows 中恢復啟用。
 
 ## 共享素材庫
 
@@ -65,7 +74,7 @@ Start-Process .\CornerPet.exe -ArgumentList '--library-test' -Wait
 Get-Content .\library-test-results.txt
 ```
 
-桌寵檢查會短暫建立視窗；素材庫檢查使用合成圖片、臨時資料夾和 loopback 連線。提交前的本機驗證：49 項桌寵檢查、22 項素材庫檢查通過。這些不等於所有遊戲、跨電腦 VPN 或 Wuwa Tappo 實際操作的相容性保證。
+桌寵檢查會短暫建立視窗；素材庫檢查使用合成圖片、臨時資料夾和 loopback 連線。提交前的本機驗證：56 項桌寵檢查、22 項素材庫檢查通過。開機啟動測試使用獨立的測試登錄機碼，不修改真正的登入啟動設定。這些不等於所有遊戲、跨電腦 VPN 或 Wuwa Tappo 實際操作的相容性保證。
 
 ## 程式結構
 
@@ -75,6 +84,7 @@ Get-Content .\library-test-results.txt
 | `Native.cs` | Win32 逐像素透明繪圖緩衝區 |
 | `GlobalShortcuts.cs` | 共用 F7／F8 的背景鍵盤掛接 |
 | `ScreenPlacement.cs` | 主／副螢幕選擇與位置對應 |
+| `StartupRegistration.cs` | 目前使用者的開機啟動設定 |
 | `ImageAsset.cs` | 磁碟快照與圖片解碼器生命週期 |
 | `LibraryWindow.cs` | 本機／共享素材介面 |
 | `LibraryClient.cs` | HTTP 存取、快取及下載驗證 |
